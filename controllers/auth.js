@@ -6,15 +6,15 @@ dotenv.config()
 
 
 let refreshTokens = []
-
+// získávat data z firebase
 const users = [
     {
         username:"Jenda",
         password: bcrypt.hashSync("ahojdajaJsemJirka", bcrypt.genSaltSync(10))
     },
     {
-        username:"Sonda",
-        password: bcrypt.hashSync("nechcitoresit", bcrypt.genSaltSync(10))
+        username:"ahoj",
+        password: bcrypt.hashSync("123456789", bcrypt.genSaltSync(10))
     },
     {
         username:"hlupak",
