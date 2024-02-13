@@ -47,7 +47,7 @@ export const login = async(req, res)=>{
         const docRef = doc(db, "users", username)
         const response = await getDoc(docRef)
 
-        if(!response.exists) return res.status(400).json("User do not exist")
+        if(!response.exists()) return res.status(400).json("User do not exist")
         const passwordHash = response.data().password
         if(!password || !bcrypt.compareSync(password, passwordHash)) return res.status(400).json("Wrong username or password")
         
