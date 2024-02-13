@@ -1,100 +1,116 @@
 import bcrypt from "bcryptjs"
 import dotenv from "dotenv"
 import jwt from "jsonwebtoken"
+import { doc, getDoc, setDoc, deleteDoc } from "firebase/firestore"
+import { db } from "../config/firebaseConfig.js"
 
 dotenv.config()
 
 
-let refreshTokens = []
-// získávat data z firebase
-const users = [
-    {
-        username:"Jenda",
-        password: bcrypt.hashSync("ahojdajaJsemJirka", bcrypt.genSaltSync(10))
-    },
-    {
-        username:"ahoj",
-        password: bcrypt.hashSync("123456789", bcrypt.genSaltSync(10))
-    },
-    {
-        username:"hlupak",
-        password: bcrypt.hashSync("123456", bcrypt.genSaltSync(10))
-    }
-]
 
-export const register = (req, res)=>{
+
+
+export const register = async (req, res)=>{
+    const username = req.body.username
+    const password = req.body.password
     try{
-
-        if(users.some((user)=>user.username===req.body.username)){
+        const docRef = doc(db, "users", username)
+        const response = await getDoc(docRef)
+        if(response.exists()){
             return res.status(409).json("User olready exists!")
         }
-
-        if(req.body.password.length>20 || req.body.password.length<8){
+        if(password.length>20 || password.length<8){
             return res.status(400).json("Invalid password length. Please use a password between 8 and 20 characters.")
         }
-        if(req.body.username.length>20 || req.body.username<4){
+        if(username.length>20 || username<4){
             return res.status(400).json("Invalid username length. Please use a username between 4 and 20 characters.")
         }
         const salt = bcrypt.genSaltSync(10);
-        const hash = bcrypt.hashSync(req.body.password, salt)
+        const hash = bcrypt.hashSync(password, salt)
     
-        users.push({
-            username:req.body.username,
+    
+        await setDoc(doc(db, "users", username), {
             password:hash
         })
         return res.status(200).json("User has been created")
     }
     catch(error){
+        console.log(error)
         return res.status(500).json("Internal Server Error")
     }
 }
 
-export const login = (req, res)=>{
-    const user = users.find(({username})=>username===req.body.username)
-    if(!user) return res.status(400).json("User do not exist")
-    if(!req.body.password || !bcrypt.compareSync(req.body.password, user.password)) return res.status(400).json("Wrong username or password")
+export const login = async(req, res)=>{
+    const username = req.body.username
+    const password = req.body.password
+    try{
+        const docRef = doc(db, "users", username)
+        const response = await getDoc(docRef)
+
+        if(!response.exists) return res.status(400).json("User do not exist")
+        const passwordHash = response.data().password
+        if(!password || !bcrypt.compareSync(password, passwordHash)) return res.status(400).json("Wrong username or password")
+        
+        const user = {username}
     
-    const userName = {username: user.username}
-
-    const accessToken = generateAccessToken(userName)
-    const refreshToken = jwt.sign(userName, process.env.REFRESH_TOKEN_SECRET)
-    // uživatel se může přihlásit vícekrát tokeny se nemažou
-    refreshTokens.push(refreshToken)
-    res.cookie("access_token", accessToken, {httpOnly:true})
-    res.cookie("refresh_token", refreshToken, {httpOnly:true})
-    res.sendStatus(200)
-
+        const accessToken = generateAccessToken(user)
+        const refreshToken = jwt.sign(user, process.env.REFRESH_TOKEN_SECRET)
+        await setDoc(doc(db, "users", username, "common", "refreshToken"),{refreshToken})
+        res.cookie("access_token", accessToken, {httpOnly:true})
+        res.cookie("refresh_token", refreshToken, {httpOnly:true})
+        return res.sendStatus(200)
+    }
+    catch(err){
+        console.log(err)
+        return res.status(500).json("Došlo k neočekávané chybě. "+err)
+    }
 }
 
-export const logout = (req, res)=>{
+export const logout = async (req, res)=>{
     const refreshToken = req.cookies.refresh_token
+    try{
+        jwt.verify(refreshToken, process.env.REFRESH_TOKEN_SECRET, async (err, user)=>{
+            if(err) return res.sendStatus(403)
 
-    refreshTokens = refreshTokens.filter(token=>token !== refreshToken)
-    res.clearCookie("access_token", {
-        sameSite:"none",
-        secure:true
-    })
-    res.clearCookie("refresh_token", {
-        sameSite:"none",
-        secure:true
-    })
+            await deleteDoc(doc(db, "users", user.username, "common", "refreshToken"))
+            res.clearCookie("access_token", {
+                sameSite:"none",
+                secure:true
+            })
+            res.clearCookie("refresh_token", {
+                sameSite:"none",
+                secure:true
+            })
+            return res.status(200).json("User has been logged out")
+        })
+    }
+    catch(err){
+        console.log(err)
+        return res.status(500).json("Došlo k chybě. "+ err)
+    }
     
-    res.status(200).json("User has been logged out")
 }
 
 
 
 
-export const verifyRefreshToken = (req, res)=>{
+export const verifyRefreshToken = async (req, res)=>{
     const refreshToken = req.cookies.refresh_token
     if(!refreshToken) return res.sendStatus(401)
-    
-    if(!refreshTokens.includes(refreshToken)) return res.sendStatus(403)
-    jwt.verify(refreshToken, process.env.REFRESH_TOKEN_SECRET, (err, user)=>{
+    try{
+    jwt.verify(refreshToken, process.env.REFRESH_TOKEN_SECRET, async (err, user)=>{
     if(err) return res.sendStatus(403)
+    const docSnap = await getDoc(doc(db, "users", user.username, "common", "refreshToken"))
+    if(!docSnap.exists()) return res.sendStatus(403)
+    if(docSnap.data().refreshToken!==refreshToken) return res.sendStatus(403)
+
     const accessToken = generateAccessToken({username:user.username})
-    res.cookie("access_token", accessToken, {httpOnly:true}).sendStatus(200)
+    return res.cookie("access_token", accessToken, {httpOnly:true}).sendStatus(200)
     })
+    }catch(err){
+        console.log(err)
+        return res.sendStatus(500)
+    }
 }
 
 export const authenticateToken = (req, res, next)=>{
@@ -131,14 +147,25 @@ const refreshAccessToken = async (refreshToken, res, callback)=>{
         username: undefined
     }
     if(!refreshToken) {data.status = 401; return callback(data)}
-    if(!refreshTokens.includes(refreshToken)) {data.status = 403; return callback(data)}
-    jwt.verify(refreshToken, process.env.REFRESH_TOKEN_SECRET, (err, user)=>{
-        if(err) {data.status = 403; return data}
-        const accessToken = generateAccessToken({username:user.username})
-        res.cookie("access_token", accessToken, {httpOnly:true})
-        data.username = user.username;
+
+    try{
+        jwt.verify(refreshToken, process.env.REFRESH_TOKEN_SECRET, async(err, user)=>{
+            if(err) {data.status = 403; return data}
+            
+            const docSnap = await getDoc(doc(db, "users", user.username, "common", "refreshToken"))
+            if(!docSnap.exists()) {data.status = 403; return callback(data)}
+            if(docSnap.data().refreshToken!==refreshToken) {data.status = 403; return callback(data)}
+        
+            const accessToken = generateAccessToken({username:user.username})
+            res.cookie("access_token", accessToken, {httpOnly:true})
+            data.username = user.username;
+            return callback(data)
+        })
+    }catch(err){
+        console.log(err)
+        data.status = 500
         return callback(data)
-    })
+    }
 }
 
 
