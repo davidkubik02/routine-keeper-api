@@ -5,6 +5,11 @@ import tasksRoutes from "./routes/tasks.js";
 import userInfoRouter from "./routes/userInfo.js";
 import cookieParser from "cookie-parser";
 import evaluationRouter from "./routes/evaluation.js";
+import path from "path";
+import { fileURLToPath } from "url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
 
@@ -22,4 +27,10 @@ app.use("/tasks", tasksRoutes);
 app.use("/user", userInfoRouter);
 app.use("/evaluation", evaluationRouter);
 
-app.listen(8080, () => console.log("Connected!"));
+app.use(express.static(path.join(__dirname, "client-build")));
+
+app.get("*", (req, res) => {
+  res.sendFile(path.join(__dirname, "client-build", "index.html"));
+});
+const PORT = process.send.PORT || 8080;
+app.listen(PORT, () => console.log("Connected!"));
